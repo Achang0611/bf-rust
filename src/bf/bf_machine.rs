@@ -33,24 +33,21 @@ impl<'a, W: Write, R: Read> BfMachine<'a, W, R> {
         while program_counter < commands.len() {
             match commands[program_counter] {
                 token if token != BfToken::LoopStart && token != BfToken::LoopEnd && skipping => {}
-                BfToken::NotCommand => {}
-                BfToken::Increament => {
-                    self.memory[self.cursor] = self.memory[self.cursor].wrapping_add(1);
+                BfToken::NotCommand(_) => {}
+                BfToken::Increment(val) => {
+                    self.memory[self.cursor] = self.memory[self.cursor].wrapping_add(val);
                 }
-                BfToken::Decreament => {
-                    self.memory[self.cursor] = self.memory[self.cursor].wrapping_sub(1);
+                BfToken::Decrement(val) => {
+                    self.memory[self.cursor] = self.memory[self.cursor].wrapping_sub(val);
                 }
-                BfToken::CursorLeft => {
+                BfToken::CursorLeft(val) => {
                     if self.cursor == 0 {
                         self.cursor = self.memory.len();
                     }
-                    self.cursor -= 1;
+                    self.cursor -= val % self.memory.len();
                 }
-                BfToken::CursorRight => {
-                    self.cursor += 1;
-                    if self.cursor >= self.memory.len() {
-                        self.cursor = 0;
-                    }
+                BfToken::CursorRight(val) => {
+                    self.cursor += val % self.memory.len();
                 }
                 BfToken::LoopStart => {
                     if self.memory[self.cursor] == 0 && !skipping {
