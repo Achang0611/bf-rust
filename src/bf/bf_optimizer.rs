@@ -2,18 +2,18 @@ pub struct BfCodeOptimizer;
 
 impl BfCodeOptimizer {
     pub fn optimize(code: &str) -> String {
-        let code = Self::not_command_optimize(code);
-        let code = Self::unnecessary_relative_operate(&code);
+        let code = Self::remove_not_command(code);
+        let code = Self::remove_unnecessary_relative_operate(&code);
         code
     }
 
-    fn not_command_optimize(code: &str) -> String {
+    fn remove_not_command(code: &str) -> String {
         code.chars()
             .filter(|c| matches!(c, '+' | '-' | ',' | '.' | '[' | ']' | '<' | '>'))
             .collect::<String>()
     }
 
-    fn unnecessary_relative_operate(code: &str) -> String {
+    fn remove_unnecessary_relative_operate(code: &str) -> String {
         let mut result = String::new();
 
         for ch in code.chars() {
