@@ -5,8 +5,8 @@ pub enum BfToken {
     Decrement(u8),
     CursorLeft(usize),
     CursorRight(usize),
-    LoopStart,
-    LoopEnd,
+    LoopStart(usize),
+    LoopEnd(usize),
     PrintChar,
     InputChar,
 }

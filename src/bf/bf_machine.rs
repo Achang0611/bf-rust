@@ -20,24 +20,11 @@ where
 pub struct BfState {
     commands: Vec<BfToken>,
     program_counter: usize,
-    loop_stack: Vec<usize>,
-    skip_flag: bool,
-    skip_loop_count: usize,
 }
 
-impl<R, W> Debug for BfMachine<R, W>
-where
-    R: Read + Debug,
-    W: Write + Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BfMachine")
-            .field("cursor", &self.cursor)
-            .field("memory", &self.memory)
-            .field("input", &self.input)
-            .field("output", &self.output)
-            .finish()
-    }
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BfRuntimeError {
+    LoopNotClosed(usize),
 }
 
 impl<R, W> BfMachine<R, W>
@@ -46,6 +33,8 @@ where
     W: Write,
 {
     pub fn new(memory_size: usize, input: R, output: W) -> Self {
+        assert!(memory_size > 0);
+
         let memory = vec![0; memory_size];
         Self {
             cursor: 0,
@@ -59,17 +48,10 @@ where
         let mut state = BfState {
             commands: commands.to_vec(),
             program_counter: 0,
-            loop_stack: vec![],
-            skip_flag: false,
-            skip_loop_count: 0,
         };
 
         while state.program_counter < state.commands.len() {
             match state.commands[state.program_counter] {
-                token
-                    if token != BfToken::LoopStart
-                        && token != BfToken::LoopEnd
-                        && state.skip_flag => {}
                 BfToken::NotCommand(_) => {}
                 BfToken::Increment(val) => {
                     self.memory[self.cursor] = self.memory[self.cursor].wrapping_add(val);
@@ -83,29 +65,16 @@ where
                 BfToken::CursorRight(val) => {
                     self.cursor = Self::wrapped_cursor(self.cursor, false, val, self.memory.len());
                 }
-                BfToken::LoopStart => {
-                    if self.memory[self.cursor] == 0 && !state.skip_flag {
-                        state.skip_flag = true;
-                        state.skip_loop_count = state.loop_stack.len();
+                BfToken::LoopStart(to_end) => {
+                    if self.memory[self.cursor] == 0 {
+                        state.program_counter = to_end;
                     }
-
-                    state.loop_stack.push(state.program_counter);
                 }
-                BfToken::LoopEnd => match state.loop_stack.pop() {
-                    Some(pc) => {
-                        if state.skip_flag {
-                            state.skip_flag = state.loop_stack.len() != state.skip_loop_count;
-                        } else {
-                            state.program_counter = pc;
-                            continue;
-                        }
+                BfToken::LoopEnd(to_start) => {
+                    if self.memory[self.cursor] != 0 {
+                        state.program_counter = to_start;
                     }
-                    None => {
-                        return Err(Box::new(BfRuntimeError::LoopNotClosed(
-                            state.program_counter,
-                        )))
-                    }
-                },
+                }
                 BfToken::PrintChar => {
                     self.output.write(&vec![self.memory[self.cursor]])?;
                 }
@@ -135,9 +104,25 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BfRuntimeError {
-    LoopNotClosed(usize),
+impl<R, W> Debug for BfMachine<R, W>
+where
+    R: Read + Debug,
+    W: Write + Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BfMachine")
+            .field("cursor", &self.cursor)
+            .field("memory", &self.memory)
+            .field("input", &self.input)
+            .field("output", &self.output)
+            .finish()
+    }
+}
+
+impl Default for BfMachine<Stdin, Stdout> {
+    fn default() -> Self {
+        Self::new(30_000, stdin(), stdout())
+    }
 }
 
 impl Display for BfRuntimeError {
@@ -152,12 +137,6 @@ impl Display for BfRuntimeError {
 }
 
 impl Error for BfRuntimeError {}
-
-impl Default for BfMachine<Stdin, Stdout> {
-    fn default() -> Self {
-        Self::new(30_000, stdin(), stdout())
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -179,7 +158,8 @@ mod tests {
             "++++++++++[>+++++++>++++++++++>+++>+<<<<-]
     >++.>+.+++++++..+++.>++.<<+++++++++++++++.
     >.+++.------.--------.>+.>.",
-        );
+        )
+        .unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -196,7 +176,8 @@ mod tests {
             "++++++++++[>+++++++>++++++++++>+++>+<<<<-]
     >++.>+.+++++++..+++.>++.<<+++++++++++++++.
     >.+++.------.--------.>+.>.",
-        );
+        )
+        .unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -210,7 +191,7 @@ mod tests {
         let mut machine = create_test_machine(&[]);
         machine.memory[0] = 10;
 
-        let commands = BfParser::parse("[-]");
+        let commands = BfParser::parse("[-]").unwrap();
 
         assert_eq!(machine.memory[0], 10);
 
@@ -223,7 +204,7 @@ mod tests {
     fn input_and_output() {
         let mut machine = create_test_machine(&['t' as u8]);
 
-        let commands = BfParser::parse(",.");
+        let commands = BfParser::parse(",.").unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -236,9 +217,9 @@ mod tests {
     fn run_batch_commands() {
         let mut machine = create_test_machine(&[]);
 
-        let assign_cell_0_to_10 = BfParser::parse("[-]++++++++++");
-        let move_cell_0_to_cell_1 = BfParser::parse("[>+ <-]");
-        let clear_cell_1 = BfParser::parse(">[-]");
+        let assign_cell_0_to_10 = BfParser::parse("[-]++++++++++").unwrap();
+        let move_cell_0_to_cell_1 = BfParser::parse("[>+ <-]").unwrap();
+        let clear_cell_1 = BfParser::parse(">[-]").unwrap();
 
         machine.run(&assign_cell_0_to_10).unwrap();
         assert_eq!(machine.memory[0], 10);
@@ -257,7 +238,8 @@ mod tests {
 
         let commands = BfParser::parse(
             "++++>++++>[-]>[-]>[-]<<<<[->[->+>+<<]>>[-<<+>>]>+<<<<]>>>>[-<<<<+>>>>]<<<<",
-        );
+        )
+        .unwrap();
         machine.run(&commands).unwrap();
 
         assert_eq!(machine.memory[0], 4);
@@ -279,7 +261,8 @@ mod tests {
             <++++++++>>>>-]<<<<+<->>>>[>+<<<+++++++++<->>>-]<<<<<[>>+<<-]+<[->-<]>[>>.<<<<[+
             .[-]]>>-]>[>>.<<-]>[-]>[-]>>>[>>[<<<<<<<<+>>>>>>>>-]<<-]]>>[-]<<<[-]<<<<<<<<]+++
             +++++++.",
-        );
+        )
+        .unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -302,7 +285,8 @@ mod tests {
             <++++++++>>>>-]<<<<+<->>>>[>+<<<+++++++++<->>>-]<<<<<[>>+<<-]+<[->-<]>[>>.<<<<[+
             .[-]]>>-]>[>>.<<-]>[-]>[-]>>>[>>[<<<<<<<<+>>>>>>>>-]<<-]]>>[-]<<<[-]<<<<<<<<]+++
             +++++++.",
-        );
+        )
+        .unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -317,7 +301,7 @@ mod tests {
 
         let commands_literally =
             "-->+++>+>+>+>+++++>++>++>->+++>++>+>>>>>>>>>>>>>>>>->++++>>>>->+++>+++>+++>+++>+++>+++>+>+>>>->->>++++>+>>>>->>++++>+>+>>->->++>++>++>++++>+>++>->++>++++>+>+>++>++>->->++>++>++++>+>+>>>>>->>->>++++>++>++>++++>>>>>->>>>>+++>->++++>->->->+++>>>+>+>+++>+>++++>>+++>->>>>>->>>++++>++>++>+>+++>->++++>>->->+++>+>+++>+>++++>>>+++>->++++>>->->++>++++>++>++++>>++[-[->>+[>]++[<]<]>>+[>]<--[++>++++>]+[<]<<++]>>>[>]++++>++++[--[+>+>++++<<[-->>--<<[->-<[--->>+<<[+>+++<[+>>++<<]]]]]]>+++[>+++++++++++++++<-]>--.<<<]";
-        let commands = BfParser::parse(commands_literally);
+        let commands = BfParser::parse(commands_literally).unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -332,7 +316,7 @@ mod tests {
 
         let commands_literally =
             "-->+++>+>+>+>+++++>++>++>->+++>++>+>>>>>>>>>>>>>>>>->++++>>>>->+++>+++>+++>+++>+++>+++>+>+>>>->->>++++>+>>>>->>++++>+>+>>->->++>++>++>++++>+>++>->++>++++>+>+>++>++>->->++>++>++++>+>+>>>>>->>->>++++>++>++>++++>>>>>->>>>>+++>->++++>->->->+++>>>+>+>+++>+>++++>>+++>->>>>>->>>++++>++>++>+>+++>->++++>>->->+++>+>+++>+>++++>>>+++>->++++>>->->++>++++>++>++++>>++[-[->>+[>]++[<]<]>>+[>]<--[++>++++>]+[<]<<++]>>>[>]++++>++++[--[+>+>++++<<[-->>--<<[->-<[--->>+<<[+>+++<[+>>++<<]]]]]]>+++[>+++++++++++++++<-]>--.<<<]";
-        let commands = BfParser::parse_compress(commands_literally);
+        let commands = BfParser::parse_compress(commands_literally).unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -345,7 +329,7 @@ mod tests {
     fn ascii_table() {
         let mut machine = create_test_machine(&[]);
 
-        let commands = BfParser::parse(".+[.+]");
+        let commands = BfParser::parse(".+[.+]").unwrap();
         machine.run(&commands).unwrap();
 
         let mut result = vec![0; 30000];
@@ -357,16 +341,6 @@ mod tests {
     }
 
     #[test]
-    fn unclosed_loop() {
-        let mut machine = create_test_machine(&[]);
-
-        let commands = BfParser::parse("[]]");
-        let error = machine.run(&commands).unwrap_err();
-
-        assert!(error.is::<BfRuntimeError>());
-    }
-
-    #[test]
     fn memory_overflow_wrapped() {
         let mut machine = create_test_machine(&[]);
 
@@ -374,9 +348,9 @@ mod tests {
         let equal_code = format!("{}+>", ">".repeat(machine.memory.len() - 1));
         let overflow_code = ">".repeat(machine.memory.len() * 2);
 
-        let commands = BfParser::parse(&code);
-        let equal_commands = BfParser::parse_compress(&equal_code);
-        let overflow_commands = BfParser::parse_compress(&overflow_code);
+        let commands = BfParser::parse(&code).unwrap();
+        let equal_commands = BfParser::parse_compress(&equal_code).unwrap();
+        let overflow_commands = BfParser::parse_compress(&overflow_code).unwrap();
 
         machine.run(&commands).unwrap();
         assert_eq!(machine.memory[machine.memory.len() - 1], 1);
