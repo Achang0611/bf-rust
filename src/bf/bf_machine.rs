@@ -22,11 +22,6 @@ pub struct BfState {
     program_counter: usize,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BfRuntimeError {
-    LoopNotClosed(usize),
-}
-
 impl<R, W> BfMachine<R, W>
 where
     R: Read,
@@ -124,19 +119,6 @@ impl Default for BfMachine<Stdin, Stdout> {
         Self::new(30_000, stdin(), stdout())
     }
 }
-
-impl Display for BfRuntimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
-            Self::LoopNotClosed(pc) => {
-                format!("The error occurred at the {pc}th character due to unclosed loop.")
-            }
-        };
-        write!(f, "{message}")
-    }
-}
-
-impl Error for BfRuntimeError {}
 
 #[cfg(test)]
 mod tests {
