@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    fmt::{Debug, Display},
+    fmt::Debug,
     io::{stdin, stdout, Read, Stdin, Stdout, Write},
 };
 
